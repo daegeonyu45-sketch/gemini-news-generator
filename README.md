@@ -1,0 +1,1 @@
+# gemini-news-generator
