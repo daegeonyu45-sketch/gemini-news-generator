@@ -31,7 +31,9 @@ import {
   Coffee,
   Shield,
   BarChart3,
-  X
+  X,
+  Volume2,
+  VolumeX
 } from 'lucide-react';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer, Legend } from 'recharts';
@@ -65,6 +67,8 @@ export default function CreatePage() {
   const [showTrustScore, setShowTrustScore] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [trustScoreData, setTrustScoreData] = useState<any[]>([]);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [generatedImage, setGeneratedImage] = useState('');
 
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -245,7 +249,7 @@ export default function CreatePage() {
       } else if (mode === 'image-prompt') {
         finalPrompt += `다음 기사에 어울리는 AI 이미지 생성 프롬프트를 영어로 작성해주세요:\n\n${generatedContent}`;
       } else {
-        finalPrompt += topic;
+        finalPrompt += `다음 주제로 완전한 기사를 작성해주세요. 반드시 서론-본론-결론 구조로 작성하고, 마지막에는 "이상 [기자명]입니다." 또는 적절한 마무리 멘트로 끝내주세요:\n\n주제: ${topic}`;
       }
 
       setGenerationProgress(60);
@@ -300,6 +304,86 @@ export default function CreatePage() {
   const copyToClipboard = () => {
     navigator.clipboard.writeText(generatedContent);
     toast.success('클립보드에 복사되었습니다.');
+  };
+
+  // 이미지 생성 함수
+  const generateImage = async () => {
+    if (!generatedContent) {
+      toast.error('먼저 기사를 생성해주세요.');
+      return;
+    }
+
+    setIsGenerating(true);
+    toast.info('이미지 프롬프트를 생성하고 있습니다...');
+
+    try {
+      // 1단계: Gemini로 이미지 프롬프트 생성
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const model = genAI.getGenerativeModel({
+        model: 'gemini-2.5-flash',
+        generationConfig: {
+          temperature: 0.7,
+          maxOutputTokens: 200,
+        },
+      });
+
+      const promptRequest = `다음 기사에 어울리는 AI 이미지 생성 프롬프트를 영어로 짧게 작성해주세요 (최대 100단어). 사실적이고 전문적인 뉴스 이미지 스타일로 작성해주세요:\n\n${generatedContent.substring(0, 500)}`;
+      
+      const result = await model.generateContent(promptRequest);
+      const imagePrompt = result.response.text().trim();
+
+      toast.info('이미지를 생성하고 있습니다...');
+
+      // 2단계: Pollinations AI로 이미지 생성 (무료 API)
+      const encodedPrompt = encodeURIComponent(imagePrompt);
+      const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1024&height=768&nologo=true`;
+      
+      setGeneratedImage(imageUrl);
+      toast.success('이미지가 생성되었습니다!');
+    } catch (error: any) {
+      console.error('Image generation error:', error);
+      toast.error('이미지 생성 중 오류가 발생했습니다.');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  // TTS 읽어주기
+  const speakContent = () => {
+    if (isSpeaking) {
+      window.speechSynthesis.cancel();
+      setIsSpeaking(false);
+      toast.info('음성 재생을 중지했습니다.');
+      return;
+    }
+
+    if (!generatedContent) {
+      toast.error('읽을 콘텐츠가 없습니다.');
+      return;
+    }
+
+    const utterance = new SpeechSynthesisUtterance(generatedContent);
+    utterance.lang = 'ko-KR';
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+    utterance.volume = 1.0;
+
+    utterance.onstart = () => {
+      setIsSpeaking(true);
+      toast.success('음성 재생을 시작합니다.');
+    };
+
+    utterance.onend = () => {
+      setIsSpeaking(false);
+      toast.info('음성 재생이 완료되었습니다.');
+    };
+
+    utterance.onerror = () => {
+      setIsSpeaking(false);
+      toast.error('음성 재생 중 오류가 발생했습니다.');
+    };
+
+    window.speechSynthesis.speak(utterance);
   };
 
   // 테마별 스타일
@@ -697,6 +781,19 @@ export default function CreatePage() {
                           클립보드에 복사
                         </Button>
                         
+                        {/* TTS 읽어주기 버튼 */}
+                        <Button
+                          onClick={speakContent}
+                          variant="outline"
+                          className={`flex-1 ${styles.buttonOutline}`}
+                        >
+                          {isSpeaking ? (
+                            <><VolumeX className="w-4 h-4 mr-2" />중지</>
+                          ) : (
+                            <><Volume2 className="w-4 h-4 mr-2" />읽어주기</>
+                          )}
+                        </Button>
+                        
                         {/* Feature 2: AI Trust Score Button */}
                         <Button
                           onClick={analyzeTrustScore}
@@ -727,7 +824,6 @@ export default function CreatePage() {
                     {[
                       { mode: 'summary' as const, icon: FileText, color: 'text-green-400', label: '요약', desc: '3줄 요약 생성' },
                       { mode: 'script' as const, icon: Video, color: 'text-red-400', label: '대본', desc: '쇼츠 대본 변환' },
-                      { mode: 'image-prompt' as const, icon: ImageIcon, color: 'text-purple-400', label: '이미지 프롬프트', desc: 'AI 이미지 생성용' },
                     ].map(({ mode, icon: Icon, color, label, desc }) => (
                       <Button
                         key={mode}
@@ -743,6 +839,68 @@ export default function CreatePage() {
                         </div>
                       </Button>
                     ))}
+                    {/* 이미지 생성 버튼 */}
+                    <Button
+                      onClick={generateImage}
+                      disabled={isGenerating}
+                      variant="outline"
+                      className={`h-auto py-6 flex flex-col items-center gap-3 ${styles.buttonOutline} hover:bg-gradient-to-r hover:from-cyan-500/20 hover:to-blue-600/20 hover:border-cyan-400/50 transition-all`}
+                    >
+                      <ImageIcon className="w-10 h-10 text-purple-400" />
+                      <div className="text-center">
+                        <div className={`font-semibold ${theme === 'dark' ? 'text-slate-200' : 'text-slate-800'}`}>이미지 생성</div>
+                        <div className={`text-xs ${styles.muted}`}>AI 이미지 자동 생성</div>
+                      </div>
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+                    )}
+
+            {/* 생성된 이미지 표시 */}
+            {generatedImage && (
+              <Card className={`${styles.cardBg} shadow-2xl`}>
+                <CardHeader>
+                  <CardTitle className="text-cyan-400">생성된 이미지</CardTitle>
+                  <CardDescription className={styles.description}>
+                    기사에 어울리는 AI 이미지
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="relative rounded-lg overflow-hidden">
+                    <img 
+                      src={generatedImage} 
+                      alt="Generated AI Image" 
+                      className="w-full h-auto rounded-lg"
+                      onError={(e) => {
+                        toast.error('이미지 로드 실패');
+                        setGeneratedImage('');
+                      }}
+                    />
+                  </div>
+                  <div className="flex gap-2 mt-4">
+                    <Button
+                      onClick={() => {
+                        window.open(generatedImage, '_blank');
+                      }}
+                      variant="outline"
+                      className={`flex-1 ${styles.buttonOutline}`}
+                    >
+                      새 창에서 보기
+                    </Button>
+                    <Button
+                      onClick={() => {
+                        const link = document.createElement('a');
+                        link.href = generatedImage;
+                        link.download = 'generated-image.png';
+                        link.click();
+                        toast.success('이미지 다운로드 시작');
+                      }}
+                      variant="outline"
+                      className={`flex-1 ${styles.buttonOutline}`}
+                    >
+                      다운로드
+                    </Button>
                   </div>
                 </CardContent>
               </Card>
@@ -967,4 +1125,5 @@ export default function CreatePage() {
     </div>
   );
 }
+
 
